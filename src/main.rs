@@ -8,16 +8,17 @@ fn main() {
 
     for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => {
-                let mut req: Vec<u8> = Vec::new();
-                stream.read_to_end(&mut req).unwrap();
-                let string = String::from_utf8(req).unwrap();
+            Ok(mut stream) => loop {
+                let mut req = [0; 512];
+                stream.read(&mut req).unwrap();
+                let string = String::from_utf8_lossy(&req).to_string();
+                println!("request: {}", string);
                 string.split("\r\n").for_each(|s| {
-                    if s == "PING" {
+                    if s.to_lowercase() == "ping" {
                         let _ = stream.write_all(b"+PONG\r\n").unwrap();
                     }
                 });
-            }
+            },
             Err(e) => {
                 println!("error: {}", e);
             }
