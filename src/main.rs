@@ -29,8 +29,7 @@ async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
                     break;
                 }
             }
-            Err(e) => {
-                println!("failed to read from socket; err = {:?}", e);
+            Err(_e) => {
                 continue;
             }
         }

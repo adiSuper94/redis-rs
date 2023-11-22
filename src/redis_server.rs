@@ -1,12 +1,14 @@
 use std::collections::HashMap;
+use std::iter::Peekable;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 use std::{slice::Iter, str::Split};
 
 pub enum Command {
     ECHO(String),
     PING,
     GET(String),
-    SET(String, String),
+    SET(String, String, Option<SystemTime>),
 }
 
 impl Command {
@@ -14,7 +16,7 @@ impl Command {
         let req = RedisDataType::deserialize(req);
         match req {
             RedisDataType::Array(arr) => {
-                let mut arr_iter = arr.iter();
+                let mut arr_iter: Peekable<Iter<'_, RedisDataType>> = arr.iter().peekable();
                 return Self::process_req(&mut arr_iter);
             }
             _ => {
@@ -23,7 +25,7 @@ impl Command {
         }
     }
 
-    fn process_req(data_stream: &mut Iter<'_, RedisDataType>) -> Vec<Command> {
+    fn process_req(data_stream: &mut Peekable<Iter<'_, RedisDataType>>) -> Vec<Command> {
         let mut commands: Vec<Command> = Vec::new();
         while let Some(item) = data_stream.next() {
             match &item {
@@ -39,11 +41,21 @@ impl Command {
                     } else if str == "SET" || str == "set" {
                         let key = Self::get_next_string(data_stream).unwrap();
                         let value = Self::get_next_string(data_stream).unwrap();
-                        commands.push(Command::SET(key, value));
+                        let mut exp: Option<SystemTime> = None;
+                        if let Some(next_str) = Self::peek_next_string(data_stream) {
+                            if next_str == "PX" || next_str == "px" {
+                                let _ = Self::get_next_string(data_stream).unwrap();
+                                let px = Self::get_next_string(data_stream).unwrap();
+                                let duration = px.parse::<u64>().unwrap();
+                                exp = std::time::SystemTime::now()
+                                    .checked_add(std::time::Duration::from_millis(duration as u64));
+                            }
+                        }
+                        commands.push(Command::SET(key, value, exp));
                     }
                 }
                 RedisDataType::Array(arr) => {
-                    let mut arr_iter = arr.iter();
+                    let mut arr_iter = arr.iter().peekable();
                     let mut arr_resp = Self::process_req(&mut arr_iter);
                     commands.append(&mut arr_resp);
                 }
@@ -52,7 +64,19 @@ impl Command {
         return commands;
     }
 
-    fn get_next_string(data_stream: &mut Iter<'_, RedisDataType>) -> Option<String> {
+    fn peek_next_string(data_stream: &mut Peekable<Iter<'_, RedisDataType>>) -> Option<String> {
+        if let Some(message) = data_stream.peek() {
+            match message {
+                RedisDataType::SimpleString(msg) => Some(msg.to_string()),
+                RedisDataType::BulkString(msg) => Some(msg.to_string()),
+                RedisDataType::Array(_) => None,
+            }
+        } else {
+            None
+        }
+    }
+
+    fn get_next_string(data_stream: &mut Peekable<Iter<'_, RedisDataType>>) -> Option<String> {
         if let Some(message) = data_stream.next() {
             match message {
                 RedisDataType::SimpleString(msg) => Some(msg.to_string()),
@@ -129,26 +153,41 @@ impl RedisDataType {
 
 pub struct Redis {
     db: Arc<Mutex<HashMap<String, String>>>,
+    exp: Arc<Mutex<HashMap<String, SystemTime>>>,
 }
 
 impl Redis {
     pub fn new() -> Self {
         Redis {
             db: Arc::new(Mutex::new(HashMap::new())),
+            exp: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     pub fn clone(&self) -> Self {
         Redis {
             db: Arc::clone(&self.db),
+            exp: Arc::clone(&self.exp),
         }
     }
 
-    fn get(&self, key: &str) -> Option<String> {
-        self.db.lock().unwrap().get(key).cloned()
+    fn get(&mut self, key: &str) -> Option<String> {
+        if let Some(exp) = self.exp.lock().unwrap().get(key).cloned() {
+            if exp < std::time::SystemTime::now() {
+                self.db.lock().unwrap().remove(key);
+            }
+        }
+
+        if let None = self.db.lock().unwrap().get(key) {
+            self.exp.lock().unwrap().remove(key);
+        }
+        return self.db.lock().unwrap().get(key).cloned();
     }
 
-    fn set(&mut self, key: String, value: String) {
-        self.db.lock().unwrap().insert(key, value);
+    fn set(&mut self, key: String, value: String, exp: &Option<SystemTime>) {
+        self.db.lock().unwrap().insert(key.clone(), value);
+        if let Some(exp) = exp {
+            self.exp.lock().unwrap().insert(key, exp.clone());
+        }
     }
 
     pub fn execute(&mut self, command: &Command) -> String {
@@ -159,11 +198,11 @@ impl Redis {
                 if let Some(value) = self.get(key) {
                     format!("${}\r\n{}\r\n", value.len(), value)
                 } else {
-                    format!("nil\r\n")
+                    format!("$-1\r\n")
                 }
             }
-            Command::SET(key, val) => {
-                self.set(key.to_string(), val.to_string());
+            Command::SET(key, val, exp) => {
+                self.set(key.to_string(), val.to_string(), exp);
                 format!("+OK\r\n")
             }
         }
