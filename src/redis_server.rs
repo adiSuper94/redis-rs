@@ -1,18 +1,15 @@
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::{slice::Iter, str::Split};
 
 pub enum Command {
     ECHO(String),
     PING,
+    GET(String),
+    SET(String, String),
 }
 
 impl Command {
-    pub fn execute(&self) -> String {
-        match self {
-            Command::ECHO(echo) => format!("${}\r\n{}\r\n", echo.len(), echo),
-            Command::PING => format!("$4\r\nPONG\r\n"),
-        }
-    }
-
     pub fn deserialize(req: &str) -> Vec<Self> {
         let req = RedisDataType::deserialize(req);
         match req {
@@ -36,6 +33,13 @@ impl Command {
                     } else if str == "ECHO" || str == "echo" {
                         let message = Self::get_next_string(data_stream).unwrap();
                         commands.push(Command::ECHO(message));
+                    } else if str == "GET" || str == "get" {
+                        let key = Self::get_next_string(data_stream).unwrap();
+                        commands.push(Command::GET(key));
+                    } else if str == "SET" || str == "set" {
+                        let key = Self::get_next_string(data_stream).unwrap();
+                        let value = Self::get_next_string(data_stream).unwrap();
+                        commands.push(Command::SET(key, value));
                     }
                 }
                 RedisDataType::Array(arr) => {
@@ -120,5 +124,48 @@ impl RedisDataType {
             }
         }
         redis_data_stream
+    }
+}
+
+pub struct Redis {
+    db: Arc<Mutex<HashMap<String, String>>>,
+}
+
+impl Redis {
+    pub fn new() -> Self {
+        Redis {
+            db: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+    pub fn clone(&self) -> Self {
+        Redis {
+            db: Arc::clone(&self.db),
+        }
+    }
+
+    fn get(&self, key: &str) -> Option<String> {
+        self.db.lock().unwrap().get(key).cloned()
+    }
+
+    fn set(&mut self, key: String, value: String) {
+        self.db.lock().unwrap().insert(key, value);
+    }
+
+    pub fn execute(&mut self, command: &Command) -> String {
+        match &command {
+            Command::ECHO(echo) => format!("${}\r\n{}\r\n", echo.len(), echo),
+            Command::PING => format!("$4\r\nPONG\r\n"),
+            Command::GET(key) => {
+                if let Some(value) = self.get(key) {
+                    format!("${}\r\n{}\r\n", value.len(), value)
+                } else {
+                    format!("nil\r\n")
+                }
+            }
+            Command::SET(key, val) => {
+                self.set(key.to_string(), val.to_string());
+                format!("+OK\r\n")
+            }
+        }
     }
 }
