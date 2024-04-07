@@ -1,11 +1,14 @@
+pub mod redis_commands;
 pub mod redis_server;
 
-use redis_server::{Command, Redis};
+use redis_commands::Command;
+use redis_server::Redis;
 use tokio::net::{TcpListener, TcpStream};
 
 #[tokio::main]
 async fn main() {
-    let redis_server = Redis::new();
+    let (dir, file_name) = parse_cli_args();
+    let redis_server = Redis::new(dir, file_name);
     let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
     loop {
         let redis_server_clone = redis_server.clone();
@@ -15,6 +18,20 @@ async fn main() {
             });
         }
     }
+}
+
+fn parse_cli_args() -> (Option<String>, Option<String>) {
+    let args: Vec<String> = std::env::args().collect();
+    let mut opts = getopts::Options::new();
+    opts.optopt("d", "dir", "set persistence directory", "DIR");
+    opts.optopt("f", "dbfilename", "set persistence filename", "FILENAME");
+    let cli_opts = match opts.parse(&args[1..]) {
+        Ok(m) => m,
+        Err(f) => panic!("{}", f.to_string()),
+    };
+    let dir = cli_opts.opt_str("d");
+    let file_name = cli_opts.opt_str("f");
+    (dir, file_name)
 }
 
 async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
