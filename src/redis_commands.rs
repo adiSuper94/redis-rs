@@ -6,6 +6,7 @@ pub enum Command {
     Get(String),
     Set(String, String, Option<SystemTime>),
     ConfigGet(String),
+    Keys(String),
 }
 
 impl Command {
@@ -55,6 +56,9 @@ impl Command {
                             let key = Self::get_next_string(data_stream).unwrap();
                             commands.push(Command::ConfigGet(key));
                         }
+                    } else if str == "KEYS" || str == "keys" {
+                        let pattern = Self::get_next_string(data_stream).unwrap();
+                        commands.push(Command::Keys(pattern));
                     }
                 }
                 RedisDataType::Array(arr) => {

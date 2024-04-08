@@ -1,4 +1,5 @@
 pub mod redis_commands;
+pub mod redis_db;
 pub mod redis_server;
 
 use redis_commands::Command;

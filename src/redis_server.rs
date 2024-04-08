@@ -1,4 +1,5 @@
 use crate::redis_commands::Command;
+use crate::redis_db::RedisDB;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -22,15 +23,28 @@ impl Redis {
                 .config
                 .lock()
                 .unwrap()
-                .insert("dir".to_string(), dir);
+                .insert("dir".to_string(), dir.clone());
+            if let Some(file_name) = file_name {
+                instance
+                    .config
+                    .lock()
+                    .unwrap()
+                    .insert("file_name".to_string(), file_name.clone());
+                let mut redis_db = RedisDB::new(dir, file_name);
+                match redis_db.read_rdb() {
+                    Ok(kivals) => {
+                        let mut db = instance.db.lock().unwrap();
+                        for (key, value) in kivals {
+                            db.insert(key, value);
+                        }
+                    }
+                    Err(e) => {
+                        println!("Error reading RDB file: {:?}", e);
+                    }
+                }
+            };
         };
-        if let Some(file_name) = file_name {
-            instance
-                .config
-                .lock()
-                .unwrap()
-                .insert("file_name".to_string(), file_name);
-        };
+
         instance
     }
     pub fn clone(&self) -> Self {
@@ -88,6 +102,18 @@ impl Redis {
                 } else {
                     format!("$-1\r\n")
                 }
+            }
+            Command::Keys(_pattern) => {
+                let key_count = self.db.lock().unwrap().keys().count();
+                let res = self
+                    .db
+                    .lock()
+                    .unwrap()
+                    .keys()
+                    .fold(String::new(), |acc, key| {
+                        format!("{}${}\r\n{}\r\n", acc, key.len(), key)
+                    });
+                format!("*{}\r\n{}", key_count, res)
             }
         }
     }
