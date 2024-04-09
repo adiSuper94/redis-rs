@@ -32,10 +32,28 @@ impl Redis {
                     .insert("file_name".to_string(), file_name.clone());
                 let mut redis_db = RedisDB::new(dir, file_name);
                 match redis_db.read_rdb() {
-                    Ok(kivals) => {
+                    Ok((kivals, exp_map)) => {
                         let mut db = instance.db.lock().unwrap();
+                        let mut exp = instance.exp.lock().unwrap();
                         for (key, value) in kivals {
-                            db.insert(key, value);
+                            match exp_map.get(&key) {
+                                Some(exp_time) => {
+                                    println!(
+                                        "key: {:?}, val: {:?}, exp_time: {:?}, cuurent_time: {:?}",
+                                        key,
+                                        value,
+                                        exp_time,
+                                        SystemTime::now()
+                                    );
+                                    if exp_time > &SystemTime::now() {
+                                        db.insert(key.clone(), value);
+                                        exp.insert(key.clone(), *exp_time);
+                                    }
+                                }
+                                None => {
+                                    db.insert(key.clone(), value);
+                                }
+                            }
                         }
                     }
                     Err(e) => {

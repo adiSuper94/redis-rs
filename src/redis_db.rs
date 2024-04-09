@@ -2,12 +2,13 @@ use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
+use std::time::{Duration, SystemTime};
 
 enum RDBOpCodes {
     Eof,
     SelectDB,
-    // ExpireTime,
-    // ExpireTimeMs,
+    ExpireTime,
+    ExpireTimeMs,
     ResizeDB,
     Aux,
 }
@@ -17,8 +18,8 @@ impl RDBOpCodes {
         match value {
             0xFF => Ok(RDBOpCodes::Eof),
             0xFE => Ok(RDBOpCodes::SelectDB),
-            // 0xFD => Ok(RDBOpCodes::ExpireTime),
-            // 0xFC => Ok(RDBOpCodes::ExpireTimeMs),
+            0xFD => Ok(RDBOpCodes::ExpireTime),
+            0xFC => Ok(RDBOpCodes::ExpireTimeMs),
             0xFB => Ok(RDBOpCodes::ResizeDB),
             0xFA => Ok(RDBOpCodes::Aux),
             _ => bail!("Invalid RDB opcode {}", value),
@@ -30,8 +31,8 @@ impl RDBOpCodes {
         match self {
             RDBOpCodes::Eof => 0xFF,
             RDBOpCodes::SelectDB => 0xFE,
-            // RDBOpCodes::ExpireTime => 0xFD,
-            // RDBOpCodes::ExpireTimeMs => 0xFC,
+            RDBOpCodes::ExpireTime => 0xFD,
+            RDBOpCodes::ExpireTimeMs => 0xFC,
             RDBOpCodes::ResizeDB => 0xFB,
             RDBOpCodes::Aux => 0xFA,
         }
@@ -172,7 +173,7 @@ impl RedisDB {
         Self { dir, file_name }
     }
 
-    fn get_next_opcode(&mut self, bite: &u8) -> Result<RDBOpCodes> {
+    fn get_next_opcode(&self, bite: &u8) -> Result<RDBOpCodes> {
         RDBOpCodes::from_u8(bite)
     }
 
@@ -185,7 +186,33 @@ impl RedisDB {
         Ok(buffer)
     }
 
-    pub fn read_rdb(&mut self) -> Result<HashMap<String, String>> {
+    fn get_expiry(
+        &self,
+        next_byte: u8,
+        byte_iter: &mut impl Iterator<Item = u8>,
+    ) -> Result<Option<SystemTime>> {
+        let expiry = match self.get_next_opcode(&next_byte) {
+            Err(_) => None,
+            Ok(opcode) => match opcode {
+                RDBOpCodes::ExpireTime => {
+                    let _ = byte_iter.next().context("Iter reached end")?;
+                    let arr = byte_iter.take(4).collect::<Vec<u8>>();
+                    let expiry = u64::from_le_bytes(arr.try_into().unwrap());
+                    SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(expiry))
+                }
+                RDBOpCodes::ExpireTimeMs => {
+                    let _ = byte_iter.next().context("Iter reached end")?;
+                    let arr = byte_iter.take(8).collect::<Vec<u8>>();
+                    let expiry = u64::from_le_bytes(arr.try_into().unwrap());
+                    SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(expiry))
+                }
+                _ => None,
+            },
+        };
+        Ok(expiry)
+    }
+
+    pub fn read_rdb(&mut self) -> Result<(HashMap<String, String>, HashMap<String, SystemTime>)> {
         let mut bytes = self.get_rbd_bytes()?;
         let magic_string = bytes.drain(0..5).collect::<Vec<u8>>();
         if magic_string != b"REDIS" {
@@ -196,12 +223,13 @@ impl RedisDB {
         let mut next_byte = byte_iter.next().context("Iter reached end")?;
 
         let mut kivals: HashMap<String, String> = HashMap::new();
+        let mut exp_map: HashMap<String, SystemTime> = HashMap::new();
 
         #[allow(irrefutable_let_patterns)]
         while let opcode = self.get_next_opcode(&next_byte)? {
             match opcode {
                 RDBOpCodes::Eof => {
-                    return Ok(kivals);
+                    return Ok((kivals, exp_map));
                 }
                 RDBOpCodes::SelectDB => {
                     let _db_number = RDBLenEncodings::from_u8(&mut byte_iter)?;
@@ -215,14 +243,23 @@ impl RedisDB {
                     let _exp_size = RDBLenEncodings::from_u8(&mut byte_iter)?;
 
                     loop {
+                        let peeked_byte = byte_iter.peek().context("Iter reached end")?.clone();
+                        let expiry_arg = self.get_expiry(peeked_byte, &mut byte_iter)?;
                         let (k, v) = self.load_key_val(&mut byte_iter)?;
-                        kivals.insert(k, v);
-
+                        kivals.insert(k.clone(), v);
+                        if let Some(expiry) = expiry_arg {
+                            exp_map.insert(k, expiry);
+                        }
                         if let Some(next_byte) = byte_iter.peek() {
-                            if let Err(_e) = self.get_next_opcode(next_byte) {
-                                continue;
-                            } else {
-                                break;
+                            match self.get_next_opcode(&next_byte) {
+                                Ok(opcode) => match opcode {
+                                    RDBOpCodes::SelectDB
+                                    | RDBOpCodes::Aux
+                                    | RDBOpCodes::ResizeDB
+                                    | RDBOpCodes::Eof => break,
+                                    _ => continue,
+                                },
+                                Err(_) => continue,
                             }
                         }
                     }
@@ -245,9 +282,9 @@ impl RedisDB {
                         continue;
                     }
                 },
-                RDBOpCodes::ResizeDB => {
-                    bail!("ResizeDB should come after select DB")
-                }
+                RDBOpCodes::ResizeDB => bail!("ResizeDB should come after select DB"),
+                RDBOpCodes::ExpireTime => bail!("ExpireTime should come after select DB"),
+                RDBOpCodes::ExpireTimeMs => bail!("ExpireTimeMs should come after select DB"),
             }
             next_byte = byte_iter.next().context("Iter reached end")?;
         }
@@ -264,8 +301,7 @@ impl RedisDB {
             RDBValueEncodings::String => {
                 let val_string_encoding = StringEncoding::from_u8(bites)?;
                 let val = val_string_encoding.to_string();
-                // println!("Key: {}, Value: {}", key, val);
-                return Ok((key, val));
+                Ok((key, val))
             }
         }
     }
