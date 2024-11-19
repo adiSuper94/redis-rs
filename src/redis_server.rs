@@ -133,6 +133,9 @@ impl Redis {
                     });
                 format!("*{}\r\n{}", key_count, res)
             }
+            Command::Info(_) => {
+                format!("*2\r\n$13\r\n# Replication\r\n$11\r\nrole:master\r\n")
+            }
         }
     }
 }
