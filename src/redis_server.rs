@@ -10,6 +10,8 @@ pub struct Redis {
     exp: Arc<Mutex<HashMap<String, SystemTime>>>,
     config: Arc<Mutex<HashMap<String, String>>>,
     role: String,
+    master_replid: Option<String>,
+    master_repl_offset: Option<usize>,
 }
 
 impl Redis {
@@ -22,6 +24,12 @@ impl Redis {
                 "master".to_string()
             } else {
                 "slave".to_string()
+            },
+            master_repl_offset: Some(0),
+            master_replid: if primary {
+                Some("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string())
+            } else {
+                None
             },
         };
         if let Some(dir) = dir {
@@ -77,6 +85,8 @@ impl Redis {
             exp: Arc::clone(&self.exp),
             config: Arc::clone(&self.config),
             role: self.role.clone(),
+            master_repl_offset: self.master_repl_offset.clone(),
+            master_replid: self.master_replid.clone(),
         }
     }
 
@@ -142,7 +152,11 @@ impl Redis {
             }
             Command::Info(section) => {
                 if section == "all" || section == "replication" {
-                    let info = format!("# Replication \r\nrole:{}\r\n", self.role);
+                    let info = if self.role == "master"{
+                     format!("# Replication \r\nrole:{}\r\nmaster_replid:{}\r\nmaster_repl_offset:{}\r\n", self.role, self.master_replid.unwrap(), self.master_repl_offset.unwrap())
+                    } else{
+                     format!("# Replication \r\nrole:{}\r\n", self.role)
+                    };
                     format!("${}\r\n{}\r\n", info.len(), info)
                 } else {
                     format!("$-1\r\n")

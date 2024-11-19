@@ -8,13 +8,13 @@ use tokio::net::{TcpListener, TcpStream};
 
 #[tokio::main]
 async fn main() {
-    let (dir, file_name, port, replica_of) = parse_cli_args();
-    let redis_server = if let Some(_) = replica_of {
-        Redis::new(dir, file_name, false)
+    let cli_args = parse_cli_args();
+    let redis_server = if let Some(_) = cli_args.replica_of {
+        Redis::new(cli_args.dir, cli_args.file_name, false)
     } else {
-        Redis::new(dir, file_name, true)
+        Redis::new(cli_args.dir, cli_args.file_name, true)
     };
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", cli_args.port))
         .await
         .unwrap();
     loop {
@@ -27,7 +27,14 @@ async fn main() {
     }
 }
 
-fn parse_cli_args() -> (Option<String>, Option<String>, String, Option<String>) {
+struct RedisCliArgs {
+    dir: Option<String>,
+    file_name: Option<String>,
+    port: String,
+    replica_of: Option<String>,
+}
+
+fn parse_cli_args() -> RedisCliArgs {
     let args: Vec<String> = std::env::args().collect();
     let mut opts = getopts::Options::new();
     opts.optopt("d", "dir", "set persistence directory", "DIR");
@@ -46,7 +53,13 @@ fn parse_cli_args() -> (Option<String>, Option<String>, String, Option<String>) 
     } else {
         "6379".to_string()
     };
-    (dir, file_name, port, replica_of)
+
+    RedisCliArgs {
+        dir,
+        file_name,
+        port,
+        replica_of,
+    }
 }
 
 async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
