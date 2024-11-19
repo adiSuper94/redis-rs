@@ -9,14 +9,20 @@ pub struct Redis {
     db: Arc<Mutex<HashMap<String, String>>>,
     exp: Arc<Mutex<HashMap<String, SystemTime>>>,
     config: Arc<Mutex<HashMap<String, String>>>,
+    role: String,
 }
 
 impl Redis {
-    pub fn new(dir: Option<String>, file_name: Option<String>) -> Self {
+    pub fn new(dir: Option<String>, file_name: Option<String>, primary: bool) -> Self {
         let instance = Redis {
             db: Arc::new(Mutex::new(HashMap::new())),
             exp: Arc::new(Mutex::new(HashMap::new())),
             config: Arc::new(Mutex::new(HashMap::new())),
+            role: if primary {
+                "master".to_string()
+            } else {
+                "slave".to_string()
+            },
         };
         if let Some(dir) = dir {
             instance
@@ -70,6 +76,7 @@ impl Redis {
             db: Arc::clone(&self.db),
             exp: Arc::clone(&self.exp),
             config: Arc::clone(&self.config),
+            role: self.role.clone(),
         }
     }
 
@@ -133,8 +140,13 @@ impl Redis {
                     });
                 format!("*{}\r\n{}", key_count, res)
             }
-            Command::Info(_) => {
-                format!("$11\r\nrole:master\r\n")
+            Command::Info(section) => {
+                if section == "all" || section == "replication" {
+                    let info = format!("# Replication \r\nrole:{}\r\n", self.role);
+                    format!("${}\r\n{}\r\n", info.len(), info)
+                } else {
+                    format!("$-1\r\n")
+                }
             }
         }
     }
