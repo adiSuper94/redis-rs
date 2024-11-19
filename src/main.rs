@@ -3,18 +3,15 @@ pub mod redis_db;
 pub mod redis_server;
 
 use redis_commands::Command;
-use redis_server::Redis;
+use redis_server::{Redis, RedisCliArgs};
 use tokio::net::{TcpListener, TcpStream};
 
 #[tokio::main]
 async fn main() {
     let cli_args = parse_cli_args();
-    let redis_server = if let Some(_) = cli_args.replica_of {
-        Redis::new(cli_args.dir, cli_args.file_name, false)
-    } else {
-        Redis::new(cli_args.dir, cli_args.file_name, true)
-    };
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", cli_args.port))
+        let port = cli_args.port.clone();
+        let redis_server = Redis::new(cli_args);
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
         .await
         .unwrap();
     loop {
@@ -27,12 +24,6 @@ async fn main() {
     }
 }
 
-struct RedisCliArgs {
-    dir: Option<String>,
-    file_name: Option<String>,
-    port: String,
-    replica_of: Option<String>,
-}
 
 fn parse_cli_args() -> RedisCliArgs {
     let args: Vec<String> = std::env::args().collect();
@@ -53,13 +44,25 @@ fn parse_cli_args() -> RedisCliArgs {
     } else {
         "6379".to_string()
     };
-
-    RedisCliArgs {
+    let mut args = RedisCliArgs {
         dir,
         file_name,
         port,
-        replica_of,
+        master_host: None,
+        master_port: None,
+        role: "master".to_string(),
+    };
+    if let Some(replica_of) = replica_of {
+        let replica_of: Vec<&str> = replica_of.split(" ").collect();
+        if replica_of.len() != 2 {
+            panic!("Invalid replicaof argument");
+        }
+        args.master_host = Some(replica_of[0].to_string());
+        args.master_port = Some(replica_of[1].to_string());
+        args.role = "slave".to_string();
     }
+    args
+
 }
 
 async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {

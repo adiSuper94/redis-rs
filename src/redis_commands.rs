@@ -24,6 +24,22 @@ impl Command {
         }
     }
 
+    pub fn serialize(&self) -> String {
+        match self {
+            Command::Echo(echo) => {
+                format!("*2\r\n$4\r\nECHO\r\n${}\r\n{}\r\n", echo.len(), echo)
+            }
+            Command::Ping => {
+                format!("*1\r\n$4\r\nPING\r\n")
+            }
+            Command::Get(_) => todo!(),
+            Command::Set(_, _, _system_time) => todo!(),
+            Command::ConfigGet(_) => todo!(),
+            Command::Keys(_) => todo!(),
+            Command::Info(_) => todo!(),
+        }
+    }
+
     fn parse_req(data_stream: &mut Peekable<Iter<'_, RedisDataType>>) -> Vec<Command> {
         let mut commands: Vec<Command> = Vec::new();
         while let Some(item) = data_stream.next() {

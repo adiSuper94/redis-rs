@@ -2,6 +2,8 @@ use crate::redis_commands::Command;
 use crate::redis_db::RedisDB;
 
 use std::collections::HashMap;
+use std::io::Write;
+use std::net::TcpStream;
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
@@ -12,33 +14,42 @@ pub struct Redis {
     role: String,
     master_replid: Option<String>,
     master_repl_offset: Option<usize>,
+    master_host: Option<String>,
+    master_port: Option<String>,
+}
+
+pub struct RedisCliArgs {
+    pub dir: Option<String>,
+    pub file_name: Option<String>,
+    pub port: String,
+    pub master_host: Option<String>,
+    pub master_port: Option<String>,
+    pub role: String,
 }
 
 impl Redis {
-    pub fn new(dir: Option<String>, file_name: Option<String>, primary: bool) -> Self {
+    pub fn new(cli_args: RedisCliArgs) -> Self {
         let instance = Redis {
             db: Arc::new(Mutex::new(HashMap::new())),
             exp: Arc::new(Mutex::new(HashMap::new())),
             config: Arc::new(Mutex::new(HashMap::new())),
-            role: if primary {
-                "master".to_string()
-            } else {
-                "slave".to_string()
-            },
+            role: cli_args.role,
             master_repl_offset: Some(0),
-            master_replid: if primary {
-                Some("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string())
-            } else {
+            master_replid: if cli_args.master_host.is_some() {
                 None
+            } else {
+                Some("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string())
             },
+            master_host: cli_args.master_host,
+            master_port: cli_args.master_port,
         };
-        if let Some(dir) = dir {
+        if let Some(dir) = cli_args.dir {
             instance
                 .config
                 .lock()
                 .unwrap()
                 .insert("dir".to_string(), dir.clone());
-            if let Some(file_name) = file_name {
+            if let Some(file_name) = cli_args.file_name {
                 instance
                     .config
                     .lock()
@@ -76,7 +87,9 @@ impl Redis {
                 }
             };
         };
-
+        if instance.role == "slave" {
+            instance.send_msg_to_master(Command::Ping);
+        }
         instance
     }
     pub fn clone(&self) -> Self {
@@ -87,6 +100,8 @@ impl Redis {
             role: self.role.clone(),
             master_repl_offset: self.master_repl_offset.clone(),
             master_replid: self.master_replid.clone(),
+            master_host: self.master_host.clone(),
+            master_port: self.master_port.clone(),
         }
     }
 
@@ -107,6 +122,18 @@ impl Redis {
         self.db.lock().unwrap().insert(key.clone(), value);
         if let Some(exp) = exp {
             self.exp.lock().unwrap().insert(key, exp.clone());
+        }
+    }
+
+    fn send_msg_to_master(&self, command: Command) {
+        if let Some(master_host) = &self.master_host {
+            if let Some(master_port) = &self.master_port {
+                let stream = TcpStream::connect(format!("{}:{}", master_host, master_port));
+                if let Ok(mut stream) = stream {
+                    let msg = command.serialize();
+                    let _ = stream.write_all(msg.as_bytes());
+                }
+            }
         }
     }
 
