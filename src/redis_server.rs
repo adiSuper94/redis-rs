@@ -152,10 +152,16 @@ impl Redis {
             }
             Command::Info(section) => {
                 if section == "all" || section == "replication" {
-                    let info = if self.role == "master"{
-                     format!("# Replication \r\nrole:{}\r\nmaster_replid:{}\r\nmaster_repl_offset:{}\r\n", self.role, self.master_replid.unwrap(), self.master_repl_offset.unwrap())
-                    } else{
-                     format!("# Replication \r\nrole:{}\r\n", self.role)
+                    let info = format!("# Replication \r\nrole:{}\r\n", self.role);
+                    let info = if let Some(master_replid) = &self.master_replid {
+                        format!("{}master_replid:{}\r\n", info, master_replid)
+                    } else {
+                        info
+                    };
+                    let info = if let Some(master_repl_offset) = &self.master_repl_offset {
+                        format!("{}master_repl_offset:{}\r\n", info, master_repl_offset)
+                    } else {
+                        info
                     };
                     format!("${}\r\n{}\r\n", info.len(), info)
                 } else {
