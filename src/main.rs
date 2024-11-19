@@ -8,9 +8,11 @@ use tokio::net::{TcpListener, TcpStream};
 
 #[tokio::main]
 async fn main() {
-    let (dir, file_name) = parse_cli_args();
+    let (dir, file_name, port) = parse_cli_args();
     let redis_server = Redis::new(dir, file_name);
-    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
+        .await
+        .unwrap();
     loop {
         let redis_server_clone = redis_server.clone();
         if let Ok((stream, _)) = listener.accept().await {
@@ -21,18 +23,24 @@ async fn main() {
     }
 }
 
-fn parse_cli_args() -> (Option<String>, Option<String>) {
+fn parse_cli_args() -> (Option<String>, Option<String>, String) {
     let args: Vec<String> = std::env::args().collect();
     let mut opts = getopts::Options::new();
     opts.optopt("d", "dir", "set persistence directory", "DIR");
     opts.optopt("f", "dbfilename", "set persistence filename", "FILENAME");
+    opts.optopt("p", "port", "set port number for redis to run on", "PORT");
     let cli_opts = match opts.parse(&args[1..]) {
         Ok(m) => m,
         Err(f) => panic!("{}", f.to_string()),
     };
     let dir = cli_opts.opt_str("d");
     let file_name = cli_opts.opt_str("f");
-    (dir, file_name)
+    let port = if let Some(port) = cli_opts.opt_str("p") {
+        port
+    } else {
+        "6379".to_string()
+    };
+    (dir, file_name, port)
 }
 
 async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
