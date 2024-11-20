@@ -9,8 +9,8 @@ use tokio::net::{TcpListener, TcpStream};
 #[tokio::main]
 async fn main() {
     let cli_args = parse_cli_args();
-        let port = cli_args.port.clone();
-        let redis_server = Redis::new(cli_args);
+    let port = cli_args.port.clone();
+    let redis_server = Redis::new(cli_args);
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
         .await
         .unwrap();
@@ -23,7 +23,6 @@ async fn main() {
         }
     }
 }
-
 
 fn parse_cli_args() -> RedisCliArgs {
     let args: Vec<String> = std::env::args().collect();
@@ -62,7 +61,6 @@ fn parse_cli_args() -> RedisCliArgs {
         args.role = "slave".to_string();
     }
     args
-
 }
 
 async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
@@ -85,8 +83,17 @@ async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
         let commands = Command::deserialize(&req);
         for command in commands {
             let resp = redis_server.execute(&command);
-            stream.writable().await.unwrap();
-            stream.try_write(resp.as_bytes()).unwrap();
+            let resp_bytes = resp.as_bytes();
+            let mut offset = 0;
+            loop {
+                stream.writable().await.unwrap();
+                if let Ok(n) = stream.try_write(&resp_bytes[offset..]) {
+                    offset += n;
+                    if offset >= resp_bytes.len() {
+                        break;
+                    }
+                }
+            }
         }
     }
 }

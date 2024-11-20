@@ -8,6 +8,7 @@ pub enum Command {
     ConfigGet(String),
     Keys(String),
     Info(String),
+    ReplConf(String, String)
 }
 
 impl Command {
@@ -37,6 +38,7 @@ impl Command {
             Command::ConfigGet(_) => todo!(),
             Command::Keys(_) => todo!(),
             Command::Info(_) => todo!(),
+            Command::ReplConf(key, val) => format!("*3\r\n$8\r\nREPLCONF\r\n${}\r\n{}\r\n${}\r\n{}\r\n", key.len(), key, val.len(), val)
         }
     }
 
