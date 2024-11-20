@@ -164,13 +164,23 @@ impl Redis {
         let _ = stream.write_all(msg.as_bytes());
         if let Err(e) = stream.read(&mut buf) {
             println!(
-                "error while reading handshake(REPLCONF) response from master: {}",
+                "error while reading handshake(REPLCONF 1) response from master: {}",
                 e
             );
             return;
         }
         let replconf2 = Command::ReplConf("capa".to_string(), "psync2".to_string());
         let msg = replconf2.serialize();
+        let _ = stream.write_all(msg.as_bytes());
+        if let Err(e) = stream.read(&mut buf) {
+            println!(
+                "error while reading handshake(REPLCONF 2) response from master: {}",
+                e
+            );
+            return;
+        }
+        let psync = Command::Psync("?".to_string(), "-1".to_string());
+        let msg = psync.serialize();
         let _ = stream.write_all(msg.as_bytes());
     }
 
@@ -233,6 +243,17 @@ impl Redis {
                 }
             }
             Command::ReplConf(_, _) => todo!(),
+            Command::Psync(_repl_id, _offset) => {
+                if let None = self.master_replid {
+                    return format!("$-1\r\n");
+                }
+                let master_replid = self.master_replid.clone().unwrap();
+                if let None = self.master_repl_offset {
+                    return format!("$-1\r\n");
+                }
+                let master_repl_offset = self.master_repl_offset.clone().unwrap();
+                format!("+FULLRESYNC {} {}\r\n", master_replid, master_repl_offset)
+            }
         }
     }
 }
