@@ -140,7 +140,7 @@ impl Redis {
         let master_host = self.master_host.clone().unwrap();
         let stream = TcpStream::connect(format!("{}:{}", master_host, master_port));
         if let Err(e) = stream {
-            println!("handshake_to_master: error while connecting to master :{}",e);
+            println!("error while connecting to master for handshake:{}", e);
             return;
         }
         let mut stream = stream.unwrap();
@@ -150,18 +150,21 @@ impl Redis {
         let mut buf = [0; 512];
         if let Err(e) = stream.read(&mut buf) {
             println!(
-                "handshake_to_master: error while reading response from master: {}",
+                "error while reading handshake(PING) response from master: {}",
                 e
             );
             return;
         }
-        let _resp = String::from_utf8_lossy(&buf).trim().to_string();
+        let pong = String::from_utf8_lossy(&buf).trim().to_string();
+        if pong.eq("$4\r\nPONG\r\n") {
+            println!("Pong did not match: {}", pong);
+        }
         let replconf1 = Command::ReplConf("listening-port".to_string(), self.port.clone());
         let msg = replconf1.serialize();
         let _ = stream.write_all(msg.as_bytes());
         if let Err(e) = stream.read(&mut buf) {
             println!(
-                "handshake_to_master: error while reading response from master: {}",
+                "error while reading handshake(REPLCONF) response from master: {}",
                 e
             );
             return;
