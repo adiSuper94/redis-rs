@@ -1,5 +1,3 @@
-use anyhow::Context as _;
-
 use crate::redis_commands::Command;
 use crate::redis_db::RedisDB;
 
@@ -254,12 +252,17 @@ impl Redis {
                 if let None = self.master_repl_offset {
                     return [format!("$-1\r\n")].to_vec();
                 }
-                let decode_bytes = hex::decode("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2").context("Error while decoding hex").unwrap();
-                let empty_rdb = String::from_utf8(decode_bytes).context("Error while stingifying decoded bytes").unwrap();
+                //let decode_bytes = hex::decode("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2").context("Error while decoding hex").unwrap();
+                //let empty_rdb = String::from_utf8_lossy(&decode_bytes).to_string();
+                //println!("{}", empty_rdb);
+                let empty_file_payload = hex::decode("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2").map_err(|decoding_err| std::io::Error::new(std::io::ErrorKind::InvalidData, decoding_err.to_string())).unwrap();
+                let empty_rdb = String::from_utf8_lossy(&empty_file_payload).to_string();
                 let master_repl_offset = self.master_repl_offset.clone().unwrap();
-                [   format!("+FULLRESYNC {} {}\r\n", master_replid, master_repl_offset),
-                    format!("${}\r\n{}\r\n", empty_rdb.len(), empty_rdb),
-                ].to_vec()
+                [
+                    format!("+FULLRESYNC {} {}\r\n", master_replid, master_repl_offset),
+                    format!("${}\r\n{}", empty_file_payload.len(), empty_rdb),
+                ]
+                .to_vec()
             }
         }
     }
