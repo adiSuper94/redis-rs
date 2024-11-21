@@ -2,6 +2,7 @@ pub mod redis_commands;
 pub mod redis_db;
 pub mod redis_server;
 
+use anyhow::Context;
 use redis_commands::Command;
 use redis_server::{Redis, RedisCliArgs};
 use tokio::net::{TcpListener, TcpStream};
@@ -82,19 +83,26 @@ async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
         let req = String::from_utf8_lossy(&buf).to_string();
         let commands = Command::deserialize(&req);
         for command in commands {
-            let resp_arr = redis_server.execute(&command);
-            for resp in resp_arr {
-                let resp_bytes = resp.as_bytes();
-                let mut offset = 0;
-                loop {
-                    stream.writable().await.unwrap();
-                    if let Ok(n) = stream.try_write(&resp_bytes[offset..]) {
-                        offset += n;
-                        if offset >= resp_bytes.len() {
-                            break;
-                        }
-                    }
-                }
+            let resp = redis_server.execute(&command);
+            let resp_bytes = resp.as_bytes();
+            write(&stream, resp_bytes).await;
+            if resp.starts_with("+FULLRESYNC") {
+                let decode_bytes = hex::decode("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2").context("Error while decoding hex").unwrap();
+                write(&stream, format!("${}\r\n", decode_bytes.as_slice().len()).as_bytes()).await;
+                write(&stream, decode_bytes.as_slice()).await;
+            }
+        }
+    }
+}
+
+async fn write(stream: &TcpStream, bytes: &[u8]) {
+    let mut offset = 0;
+    loop {
+        stream.writable().await.unwrap();
+        if let Ok(_n) = stream.try_write(&bytes) {
+            offset += n;
+            if offset >= bytes.len() {
+                break;
             }
         }
     }
