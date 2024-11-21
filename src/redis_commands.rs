@@ -39,8 +39,20 @@ impl Command {
             Command::ConfigGet(_) => todo!(),
             Command::Keys(_) => todo!(),
             Command::Info(_) => todo!(),
-            Command::ReplConf(key, val) => format!("*3\r\n$8\r\nREPLCONF\r\n${}\r\n{}\r\n${}\r\n{}\r\n", key.len(), key, val.len(), val),
-            Command::Psync(repl_id, offset) => format!("*3\r\n$5\r\nPSYNC\r\n${}\r\n{}\r\n${}\r\n{}\r\n", repl_id.len(), repl_id, offset.len(), offset),
+            Command::ReplConf(key, val) => format!(
+                "*3\r\n$8\r\nREPLCONF\r\n${}\r\n{}\r\n${}\r\n{}\r\n",
+                key.len(),
+                key,
+                val.len(),
+                val
+            ),
+            Command::Psync(repl_id, offset) => format!(
+                "*3\r\n$5\r\nPSYNC\r\n${}\r\n{}\r\n${}\r\n{}\r\n",
+                repl_id.len(),
+                repl_id,
+                offset.len(),
+                offset
+            ),
         }
     }
 
@@ -90,10 +102,14 @@ impl Command {
                         } else {
                             commands.push(Command::Info("all".to_string()));
                         }
-                    }else if str == "REPLCONF" || str == "replconf"{
+                    } else if str == "REPLCONF" || str == "replconf" {
                         let key = Self::get_next_string(data_stream).unwrap();
                         let val = Self::get_next_string(data_stream).unwrap();
                         commands.push(Command::ReplConf(key, val));
+                    } else if str == "PSYNC" || str == "psync" {
+                        let key = Self::get_next_string(data_stream).unwrap();
+                        let val = Self::get_next_string(data_stream).unwrap();
+                        commands.push(Command::Psync(key, val));
                     }
                 }
                 RedisDataType::Array(arr) => {
