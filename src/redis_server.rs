@@ -258,7 +258,7 @@ impl Redis {
                 let empty_rdb = String::from_utf8(decode_bytes).context("Error while stingifying decoded bytes").unwrap();
                 let master_repl_offset = self.master_repl_offset.clone().unwrap();
                 [   format!("+FULLRESYNC {} {}\r\n", master_replid, master_repl_offset),
-                    format!("${}\r\n{}\r\n", empty_rdb.len(), empty_rdb),
+                    format!("${}\r\n{}", empty_rdb.len(), empty_rdb),
                 ].to_vec()
             }
         }
