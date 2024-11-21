@@ -255,11 +255,14 @@ impl Redis {
                     return [format!("$-1\r\n")].to_vec();
                 }
                 let decode_bytes = hex::decode("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2").context("Error while decoding hex").unwrap();
-                let empty_rdb = String::from_utf8(decode_bytes).context("Error while stingifying decoded bytes").unwrap();
+                let empty_rdb = String::from_utf8_lossy(&decode_bytes).to_string();
+                println!("{}", empty_rdb);
                 let master_repl_offset = self.master_repl_offset.clone().unwrap();
-                [   format!("+FULLRESYNC {} {}\r\n", master_replid, master_repl_offset),
-                    format!("${}\r\n{}\r\n", empty_rdb.len(), empty_rdb),
-                ].to_vec()
+                [
+                    format!("+FULLRESYNC {} {}\r\n", master_replid, master_repl_offset),
+                    format!("${}\r\n{}", empty_rdb.len(), empty_rdb),
+                ]
+                .to_vec()
             }
         }
     }
