@@ -184,32 +184,32 @@ impl Redis {
         let _ = stream.write_all(msg.as_bytes());
     }
 
-    pub fn execute(&mut self, command: &Command) -> String {
+    pub fn execute(&mut self, command: &Command) -> Vec<String> {
         match &command {
-            Command::Echo(echo) => format!("${}\r\n{}\r\n", echo.len(), echo),
-            Command::Ping => format!("$4\r\nPONG\r\n"),
+            Command::Echo(echo) => [format!("${}\r\n{}\r\n", echo.len(), echo)].to_vec(),
+            Command::Ping => [format!("$4\r\nPONG\r\n")].to_vec(),
             Command::Get(key) => {
                 if let Some(value) = self.get(key) {
-                    format!("${}\r\n{}\r\n", value.len(), value)
+                    [format!("${}\r\n{}\r\n", value.len(), value)].to_vec()
                 } else {
-                    format!("$-1\r\n")
+                    [format!("$-1\r\n")].to_vec()
                 }
             }
             Command::Set(key, val, exp) => {
                 self.set(key.to_string(), val.to_string(), exp);
-                format!("+OK\r\n")
+                [format!("+OK\r\n")].to_vec()
             }
             Command::ConfigGet(key) => {
                 if let Some(value) = self.config.lock().unwrap().get(key) {
-                    format!(
+                    [format!(
                         "*2\r\n${}\r\n{}\r\n${}\r\n{}\r\n",
                         key.len(),
                         key,
                         value.len(),
                         value
-                    )
+                    )].to_vec()
                 } else {
-                    format!("$-1\r\n")
+                    [format!("$-1\r\n")].to_vec()
                 }
             }
             Command::Keys(_pattern) => {
@@ -222,7 +222,7 @@ impl Redis {
                     .fold(String::new(), |acc, key| {
                         format!("{}${}\r\n{}\r\n", acc, key.len(), key)
                     });
-                format!("*{}\r\n{}", key_count, res)
+                [format!("*{}\r\n{}", key_count, res)].to_vec()
             }
             Command::Info(section) => {
                 if section == "all" || section == "replication" || section == "REPLICATION" {
@@ -237,24 +237,25 @@ impl Redis {
                     } else {
                         info
                     };
-                    format!("${}\r\n{}\r\n", info.len(), info)
+                    [format!("${}\r\n{}\r\n", info.len(), info)].to_vec()
                 } else {
-                    format!("$-1\r\n")
+                    [format!("$-1\r\n")].to_vec()
                 }
             }
             Command::ReplConf(_, _) => {
-                format!("+OK\r\n")
+                [format!("+OK\r\n")].to_vec()
             }
             Command::Psync(_repl_id, _offset) => {
                 if let None = self.master_replid {
-                    return format!("$-1\r\n");
+                    return [format!("$-1\r\n")].to_vec();
                 }
                 let master_replid = self.master_replid.clone().unwrap();
                 if let None = self.master_repl_offset {
-                    return format!("$-1\r\n");
+                    return [format!("$-1\r\n")].to_vec();
                 }
                 let master_repl_offset = self.master_repl_offset.clone().unwrap();
-                format!("+FULLRESYNC {} {}\r\n", master_replid, master_repl_offset)
+                let empty_rdb = "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2".to_string();
+                [format!("+FULLRESYNC {} {}\r\n", master_replid, master_repl_offset), empty_rdb].to_vec()
             }
         }
     }
