@@ -82,15 +82,17 @@ async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
         let req = String::from_utf8_lossy(&buf).to_string();
         let commands = Command::deserialize(&req);
         for command in commands {
-            let resp = redis_server.execute(&command);
-            let resp_bytes = resp.as_bytes();
-            let mut offset = 0;
-            loop {
-                stream.writable().await.unwrap();
-                if let Ok(n) = stream.try_write(&resp_bytes[offset..]) {
-                    offset += n;
-                    if offset >= resp_bytes.len() {
-                        break;
+            let resp_arr = redis_server.execute(&command);
+            for resp in resp_arr {
+                let resp_bytes = resp.as_bytes();
+                let mut offset = 0;
+                loop {
+                    stream.writable().await.unwrap();
+                    if let Ok(n) = stream.try_write(&resp_bytes[offset..]) {
+                        offset += n;
+                        if offset >= resp_bytes.len() {
+                            break;
+                        }
                     }
                 }
             }
