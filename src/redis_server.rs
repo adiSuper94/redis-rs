@@ -242,7 +242,9 @@ impl Redis {
                     format!("$-1\r\n")
                 }
             }
-            Command::ReplConf(_, _) => todo!(),
+            Command::ReplConf(_, _) => {
+                format!("+OK\r\n")
+            }
             Command::Psync(_repl_id, _offset) => {
                 if let None = self.master_replid {
                     return format!("$-1\r\n");
