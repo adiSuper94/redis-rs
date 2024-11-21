@@ -90,6 +90,10 @@ impl Command {
                         } else {
                             commands.push(Command::Info("all".to_string()));
                         }
+                    }else if str == "REPLCONF" || str == "replconf"{
+                        let key = Self::get_next_string(data_stream).unwrap();
+                        let val = Self::get_next_string(data_stream).unwrap();
+                        commands.push(Command::ReplConf(key, val));
                     }
                 }
                 RedisDataType::Array(arr) => {
