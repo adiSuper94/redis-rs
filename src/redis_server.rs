@@ -33,6 +33,7 @@ pub struct Redis {
     repl_offset: Option<usize>,
     master_host: Option<String>,
     master_port: Option<String>,
+    master_stream: Option<Arc<Mutex<TcpStream>>>,
     replica_stream: Option<Arc<Mutex<TcpStream>>>,
 }
 
@@ -51,16 +52,16 @@ impl Redis {
             db: Arc::new(Mutex::new(HashMap::new())),
             exp: Arc::new(Mutex::new(HashMap::new())),
             config: Arc::new(Mutex::new(HashMap::new())),
-            role: cli_args.role,
             repl_offset: Some(0),
             port: cli_args.port,
-            replid: if cli_args.master_host.is_some() {
-                None
-            } else {
-                Some("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string())
+            replid: match cli_args.role {
+                Role::Primary => Some("8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string()),
+                Role::Replica => None,
             },
+            role: cli_args.role,
             master_host: cli_args.master_host,
             master_port: cli_args.master_port,
+            master_stream: None,
             replica_stream: None,
         };
         if let Some(dir) = cli_args.dir {
@@ -118,10 +119,11 @@ impl Redis {
             master_host: self.master_host.clone(),
             master_port: self.master_port.clone(),
             port: self.port.clone(),
+            master_stream: None,
             replica_stream: None,
         };
-        if let Some(replica_stream) = &self.replica_stream {
-            clone.replica_stream = Some(Arc::clone(replica_stream));
+        if let Some(master_stream) = &self.master_stream {
+            clone.master_stream = Some(Arc::clone(master_stream));
         };
         clone
     }
@@ -252,11 +254,13 @@ impl Redis {
         let psync = Command::Psync("?".to_string(), "-1".to_string());
         let msg = psync.serialize();
         write(&stream, msg.as_bytes()).await;
-        self.replica_stream = Some(Arc::new(Mutex::new(stream)));
+        self.master_stream = Some(Arc::new(Mutex::new(stream)));
     }
 
-    pub async fn execute(&mut self, command: &Command) -> String {
-        match &command {
+    pub async fn execute(&mut self, command: Command, stream: Arc<Mutex<TcpStream>>) {
+        let mut replicate = false;
+        let mut full_replicate = false;
+        let resp = match &command {
             Command::Echo(echo) => format!("${}\r\n{}\r\n", echo.len(), echo),
             Command::Ping => format!("$4\r\nPONG\r\n"),
             Command::Get(key) => {
@@ -268,6 +272,7 @@ impl Redis {
             }
             Command::Set(key, val, exp) => {
                 self.set(key.to_string(), val.to_string(), exp).await;
+                replicate = true;
                 format!("+OK\r\n")
             }
             Command::ConfigGet(key) => {
@@ -309,26 +314,35 @@ impl Redis {
                 }
             }
             Command::ReplConf(_, _) => format!("+OK\r\n"),
-            Command::Psync(_repl_id, _offset) => {
-                if let None = self.replid {
-                    return format!("$-1\r\n");
+            Command::Psync(_repl_id, _offset) => match self.role {
+                Role::Primary => {
+                    let master_repl_offset = self.repl_offset.clone().unwrap();
+                    let master_replid = self.replid.clone().unwrap();
+                    full_replicate = true;
+                    self.replica_stream = Some(Arc::clone(&stream));
+                    format!("+FULLRESYNC {} {}\r\n", master_replid, master_repl_offset)
                 }
-                let master_replid = self.replid.clone().unwrap();
-                if let None = self.repl_offset {
-                    return format!("$-1\r\n");
-                }
-                let master_repl_offset = self.repl_offset.clone().unwrap();
-                format!("+FULLRESYNC {} {}\r\n", master_replid, master_repl_offset)
-            }
+                Role::Replica => format!("$-1\r\n"),
+            },
+        };
+
+        let stream = stream.lock().await;
+        write(&stream, resp.as_bytes()).await;
+        if replicate {
+            self.replicate(command).await;
+        }
+        if full_replicate {
+            print!("hi");
+            self.send_emtpy_rdb().await;
         }
     }
 
     async fn replicate(&self, cmd: Command) {
-        if let Some(replica_stream) = &self.replica_stream {
-            let clone_stream = Arc::clone(replica_stream);
+        if let Some(master_stream) = &self.master_stream {
+            let clone_stream = Arc::clone(master_stream);
             tokio::spawn(async move {
-                if let Ok(stream) = clone_stream.try_lock() {
-                    stream.readable().await;
+                let stream = clone_stream.lock().await;
+                if let Ok(()) = stream.readable().await {
                     write(&stream, cmd.serialize().as_bytes()).await;
                 }
             });
@@ -340,7 +354,9 @@ impl Redis {
             .context("Error while decoding hex").unwrap();
         match &self.role {
             Role::Primary => {
+                print!("hi");
                 if let Some(stream) = &mut self.replica_stream {
+                    print!("hi");
                     loop {
                         match stream.try_lock() {
                             Ok(stream) => {
