@@ -1,24 +1,27 @@
 pub mod redis_commands;
 pub mod redis_db;
 pub mod redis_server;
+use std::sync::Arc;
+
 use redis_commands::Command;
 use redis_server::{Redis, RedisCliArgs, Role};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{
+    net::{TcpListener, TcpStream},
+    sync::Mutex,
+};
 
 #[tokio::main]
 async fn main() {
     let cli_args = parse_cli_args();
     let port = cli_args.port.clone();
-    let redis_server = Redis::new(cli_args).await;
+    let mut redis_server = Redis::new(cli_args).await;
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
         .await
         .unwrap();
     loop {
         let redis_server_clone = redis_server.clone();
         if let Ok((stream, _)) = listener.accept().await {
-            tokio::spawn(async move {
-                handle_stream(stream, redis_server_clone).await;
-            });
+            redis_server = handle_stream(stream, redis_server_clone).await;
         }
     }
 }
@@ -48,7 +51,7 @@ fn parse_cli_args() -> RedisCliArgs {
         port,
         master_host: None,
         master_port: None,
-        role: Role::Primary
+        role: Role::Primary,
     };
     if let Some(replica_of) = replica_of {
         let replica_of: Vec<&str> = replica_of.split(" ").collect();
@@ -62,13 +65,14 @@ fn parse_cli_args() -> RedisCliArgs {
     args
 }
 
-async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
+async fn handle_stream(stream: TcpStream, mut redis_server: Redis) -> Redis{
+    let stream = Arc::new(Mutex::new(stream));
     loop {
-        if let Err(_) = stream.readable().await {
+        if let Err(_) = stream.lock().await.readable().await {
             continue;
         }
         let mut buf = [0; 512];
-        match stream.try_read(&mut buf) {
+        match stream.lock().await.try_read(&mut buf) {
             Ok(n) => {
                 if n == 0 {
                     break;
@@ -81,22 +85,21 @@ async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
         let req = String::from_utf8_lossy(&buf).to_string();
         let commands = Command::deserialize(&req);
         for command in commands {
-            let resp = redis_server.execute(&command).await;
-            let resp_bytes = resp.as_bytes();
-            write(&stream, resp_bytes).await;
+            redis_server = redis_server.execute(command, Arc::clone(&stream)).await;
         }
     }
+    redis_server
 }
 
-async fn write(stream: &TcpStream, bytes: &[u8]) {
-    let mut offset = 0;
-    loop {
-        stream.writable().await.unwrap();
-        if let Ok(n) = stream.try_write(&bytes) {
-            offset += n;
-            if offset >= bytes.len() {
-                break;
-            }
-        }
-    }
-}
+//async fn write(stream: &TcpStream, bytes: &[u8]) {
+//    let mut offset = 0;
+//    loop {
+//        stream.writable().await.unwrap();
+//        if let Ok(n) = stream.try_write(&bytes) {
+//            offset += n;
+//            if offset >= bytes.len() {
+//                break;
+//            }
+//        }
+//    }
+//}
