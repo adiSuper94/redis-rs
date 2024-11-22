@@ -48,7 +48,7 @@ fn parse_cli_args() -> RedisCliArgs {
         port,
         master_host: None,
         master_port: None,
-        role: Role::Primary
+        role: Role::Primary,
     };
     if let Some(replica_of) = replica_of {
         let replica_of: Vec<&str> = replica_of.split(" ").collect();
@@ -62,7 +62,7 @@ fn parse_cli_args() -> RedisCliArgs {
     args
 }
 
-async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
+async fn handle_stream(mut stream: TcpStream, mut redis_server: Redis) {
     loop {
         if let Err(_) = stream.readable().await {
             continue;
@@ -81,9 +81,7 @@ async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
         let req = String::from_utf8_lossy(&buf).to_string();
         let commands = Command::deserialize(&req);
         for command in commands {
-            let resp = redis_server.execute(&command).await;
-            let resp_bytes = resp.as_bytes();
-            write(&stream, resp_bytes).await;
+            redis_server.execute(command, &mut stream).await;
         }
     }
 }
