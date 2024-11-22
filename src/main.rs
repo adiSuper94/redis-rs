@@ -1,17 +1,15 @@
 pub mod redis_commands;
 pub mod redis_db;
 pub mod redis_server;
-
-use anyhow::Context;
 use redis_commands::Command;
-use redis_server::{Redis, RedisCliArgs};
+use redis_server::{Redis, RedisCliArgs, Role};
 use tokio::net::{TcpListener, TcpStream};
 
 #[tokio::main]
 async fn main() {
     let cli_args = parse_cli_args();
     let port = cli_args.port.clone();
-    let redis_server = Redis::new(cli_args);
+    let redis_server = Redis::new(cli_args).await;
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
         .await
         .unwrap();
@@ -50,7 +48,7 @@ fn parse_cli_args() -> RedisCliArgs {
         port,
         master_host: None,
         master_port: None,
-        role: "master".to_string(),
+        role: Role::Primary
     };
     if let Some(replica_of) = replica_of {
         let replica_of: Vec<&str> = replica_of.split(" ").collect();
@@ -59,7 +57,7 @@ fn parse_cli_args() -> RedisCliArgs {
         }
         args.master_host = Some(replica_of[0].to_string());
         args.master_port = Some(replica_of[1].to_string());
-        args.role = "slave".to_string();
+        args.role = Role::Replica
     }
     args
 }
@@ -83,14 +81,9 @@ async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
         let req = String::from_utf8_lossy(&buf).to_string();
         let commands = Command::deserialize(&req);
         for command in commands {
-            let resp = redis_server.execute(&command);
+            let resp = redis_server.execute(&command).await;
             let resp_bytes = resp.as_bytes();
             write(&stream, resp_bytes).await;
-            if resp.starts_with("+FULLRESYNC") {
-                let decode_bytes = hex::decode("524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2").context("Error while decoding hex").unwrap();
-                write(&stream, format!("${}\r\n", decode_bytes.as_slice().len()).as_bytes()).await;
-                write(&stream, decode_bytes.as_slice()).await;
-            }
         }
     }
 }
