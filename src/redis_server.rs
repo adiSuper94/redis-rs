@@ -321,7 +321,7 @@ impl Redis {
                 Role::Replica => format!("$-1\r\n"),
             },
         };
-        if !resp.eq("") {
+        if !resp.eq("") && !replicate {
             write(&stream, resp.as_bytes()).await;
         }
         if replicate {
