@@ -1,5 +1,6 @@
 use std::{iter::Peekable, slice::Iter, str::Split, time::SystemTime};
 
+#[derive(Clone)]
 pub enum Command {
     Echo(String),
     Ping,
