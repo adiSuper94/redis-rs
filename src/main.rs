@@ -1,23 +1,29 @@
 pub mod redis_commands;
 pub mod redis_db;
 pub mod redis_server;
+
+use std::sync::Arc;
+
 use redis_commands::Command;
 use redis_server::{Redis, RedisCliArgs, Role};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::{net::{TcpListener, TcpStream}, sync::broadcast::{self, Sender}};
 
 #[tokio::main]
 async fn main() {
     let cli_args = parse_cli_args();
     let port = cli_args.port.clone();
     let redis_server = Redis::new(cli_args).await;
+    let (tx, _rx) = broadcast::channel::<Command>(8);
+    let sender = Arc::new(tx);
     let listener = TcpListener::bind(format!("127.0.0.1:{}", port))
         .await
         .unwrap();
     loop {
         let redis_server_clone = redis_server.clone();
+        let sender = Arc::clone(&sender);
         if let Ok((stream, _)) = listener.accept().await {
             tokio::spawn(async move {
-                handle_stream(stream, redis_server_clone).await;
+                handle_stream(stream, redis_server_clone, sender).await;
             });
         }
     }
@@ -48,7 +54,7 @@ fn parse_cli_args() -> RedisCliArgs {
         port,
         master_host: None,
         master_port: None,
-        role: Role::Primary
+        role: Role::Primary,
     };
     if let Some(replica_of) = replica_of {
         let replica_of: Vec<&str> = replica_of.split(" ").collect();
@@ -62,7 +68,7 @@ fn parse_cli_args() -> RedisCliArgs {
     args
 }
 
-async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
+async fn handle_stream(stream: TcpStream, mut redis_server: Redis, sender: Arc::<Sender<Command>>) {
     loop {
         if let Err(_) = stream.readable().await {
             continue;
@@ -81,22 +87,7 @@ async fn handle_stream(stream: TcpStream, mut redis_server: Redis) {
         let req = String::from_utf8_lossy(&buf).to_string();
         let commands = Command::deserialize(&req);
         for command in commands {
-            let resp = redis_server.execute(&command).await;
-            let resp_bytes = resp.as_bytes();
-            write(&stream, resp_bytes).await;
-        }
-    }
-}
-
-async fn write(stream: &TcpStream, bytes: &[u8]) {
-    let mut offset = 0;
-    loop {
-        stream.writable().await.unwrap();
-        if let Ok(n) = stream.try_write(&bytes) {
-            offset += n;
-            if offset >= bytes.len() {
-                break;
-            }
+            redis_server.execute(command, &stream, Arc::clone(&sender)).await;
         }
     }
 }

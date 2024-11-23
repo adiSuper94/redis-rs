@@ -1,5 +1,6 @@
 use std::{iter::Peekable, slice::Iter, str::Split, time::SystemTime};
 
+#[derive(Clone)]
 pub enum Command {
     Echo(String),
     Ping,
@@ -35,7 +36,30 @@ impl Command {
                 format!("*1\r\n$4\r\nPING\r\n")
             }
             Command::Get(_) => todo!(),
-            Command::Set(_, _, _system_time) => todo!(),
+            Command::Set(key, val, system_time) => {
+                let cmd = format!(
+                    "$3\r\nSET\r\n${}\r\n{}\r\n${}\r\n{}",
+                    key.len(),
+                    key,
+                    val.len(),
+                    val
+                );
+                match system_time {
+                    Some(exp) => match exp.elapsed() {
+                        Ok(_) => "".to_string(),
+                        Err(e) => {
+                            let durr = e.duration().as_millis();
+                            format!(
+                                "*5\r\n{}\r\n$2\r\npx\r\n${}\r\n{}\r\n",
+                                cmd,
+                                durr.to_string().len(),
+                                durr
+                            )
+                        }
+                    },
+                    None => format!("*3\r\n{}\r\n", cmd),
+                }
+            }
             Command::ConfigGet(_) => todo!(),
             Command::Keys(_) => todo!(),
             Command::Info(_) => todo!(),
